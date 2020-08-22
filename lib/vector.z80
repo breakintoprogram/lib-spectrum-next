@@ -1,0 +1,247 @@
+;
+; Title:	ZX Spectrum Next Vector Output Routines (Layer 2)
+; Author:	Dean Belfield
+; Created:	22/08/2020
+; Last Updated:	22/08/2020
+;
+; Requires:	output
+;
+; Modinfo:
+;
+
+; Plot routine
+; A = Pixel byte to write out
+; B = Y pixel position
+; C = X pixel position
+;
+Plot:			CALL 	Get_Pixel_Address
+			LD	(HL), A
+			RET
+
+; Draw Line routine
+; A = Pixel byte to write out
+; B = Y pixel position 1
+; C = X pixel position 1
+; D = Y pixel position 2
+; E = X pixel position 2
+;
+Draw_Line:		LD (Draw_Line_M1+1),A		; Store the pixel colour
+
+			LD A,D				; Check whether we are going to be drawing up
+			CP B
+			JR NC,Draw_Line_1
+
+			PUSH BC				; If we are, then this neat trick swaps BC and DE
+			PUSH DE				; using the stack, forcing the line to be always
+			POP BC				; drawn downwards
+			POP DE
+
+Draw_Line_1:		CALL Get_Pixel_Address		; Get screen address in HL
+;
+; At this point we have
+; HL = Screen address of the start point
+; BC = Start coordinate (B=Y1, C=X1)
+; DE = End coordinates  (D=Y2, E=X2)
+;
+			LD A,D				; Calculate the line height in B (Y2-Y1)
+			SUB B
+			LD B,A
+	
+			LD A,E				; Calculate the line width in C (X2-X1)
+			SUB C
+			JR C,Draw_Line_X1		; If carry set (negative result) then we are drawing from right to left
+;
+; This bit of code mods the main loop for drawing left to right
+;
+			LD C,A				; Store the line width
+			LD A,0x2C			; Code for INC L
+			JR Draw_Line_X2			; Skip the next bit
+;
+; This bit of code mods the main loop for drawing right to left
+;
+Draw_Line_X1:		NEG				; The width of line is negative, so make it positive again
+			LD C,A				; Store the line width
+			LD A,0x2D			; Code for DEC L
+;
+; We've got the basic information at this point
+;
+Draw_Line_X2:		LD (Draw_Line_Q1_M2),A
+			LD (Draw_Line_Q2_M2),A
+Draw_Line_M1:		LD D, 0				; Fetch the pixel colour back
+			LD A,B				; Check if B and C are 0
+			OR C
+			JR Z,Draw_Line_P		; There is no line, so just plot a single point
+;
+; At this point
+; HL = Screen address of the start point
+;  B = Line height (YL)
+;  C = Line width (XL)
+;  D = Pixel data
+;
+Draw_Line_Q:		LD A,B				; Work out which diagonal we are on
+			CP C
+			JR NC,Draw_Line_Q2
+;
+; This bit of code draws the line where B<C (more horizontal than vertical)
+;
+Draw_Line_Q1:		LD A,C				; A = XL
+			LD (Draw_Line_Q1_M1 + 1),A	; Self-mod the code to store XL in loop
+			LD C,B				; C = YL
+			LD B,A				; B = XL (loop counter)
+			LD E,B				; E = XL
+			SRL E				; E = XL / 2 (error)
+Draw_Line_Q1_L:		LD (HL),D			; Plot the pixel
+			LD A,E				; Add the line height to the error (E = E - YL)
+			SUB C
+			LD E,A
+			JR NC,Draw_Line_Q1_M2
+Draw_Line_Q1_M1:	ADD A,0				; Add the line width to the error (E = E + XL) - previously self-modded
+			LD E,A
+			CALL Pixel_Address_Down
+Draw_Line_Q1_M2:	NOP				; Move to adjacent screen address; more self modifying code
+			DJNZ Draw_Line_Q1_L		; Loop until the line is drawn
+Draw_Line_P:		LD (HL),D			; Plot the final point
+			RET
+;
+; This bit draws the line where B>=C (more vertical than horizontal, or diagonal)
+;
+Draw_Line_Q2:		LD (Draw_Line_Q2_M1 + 1),A	; Self-mod the code to store YL in loop
+			LD E,B				; E = YL
+			SRL E				; E = YL / 2 (error)
+Draw_Line_Q2_L:		LD (HL),D 			; Plot the pixel
+			LD A,E				; Add the line width to the error
+			SUB C				; 
+			JR NC,Draw_Line_Q2_S		; Skip the next bit if we don't get a carry
+Draw_Line_Q2_M1: 	ADD A,0				; Add the line height to the error (E = E + XL) - previously self-modded
+Draw_Line_Q2_M2:	NOP				; Move to adjacent screen address; more self modifying code
+Draw_Line_Q2_S:		LD E,A				; Store the error value back in
+			CALL Pixel_Address_Down		; And also move down
+			DJNZ Draw_Line_Q2_L
+			JR Draw_Line_P			; Plot the final point
+
+; Draw Circle (Beta - uses Plot to draw the circle outline as a proof of concept)
+; B = Y pixel position of circle centre
+; C = X pixel position of circle centre
+; D = Radius of circle
+; A = Colour
+;
+Draw_Circle:		LD (Draw_Circle_Plot+1),A	; Store the colour
+			LD A,D				; Get the radius
+			AND A				; Zero radius?
+			JR Z,Plot			; Just plot the point
+			LD (Draw_Circle_M1 + 1),BC	; Store circle origin
+
+			LD IXH,A			; IXH = Y
+			LD IXL,0			; IXL = X
+;
+; Calculate BC (D2) = 3-(R*2)
+;
+			LD H,0				; HL = R
+			LD L,A
+			ADD HL,HL			; HL = R*2
+			EX DE,HL			; DE = R*2
+			LD HL,3
+			AND A
+			SBC HL,DE			; HL = 3-(R*2)
+			LD B,H
+			LD C,L
+;
+; Calculate HL (Delta) = 1-R
+;
+			LD HL,1
+			LD D,0
+			LD E,IXL
+			AND A
+			SBC HL,DE			; HL = 1 - CR
+;
+; SET DE (D1) = 1
+;
+			LD DE,1
+
+Draw_Circle_Loop:	LD A,IXH			; Get Y in A
+			CP IXL				; Compare with X
+			RET C				; Return if X>Y
+;
+; The routine only calculates an eighth of the circle, so use symnmetry to draw
+;			
+			EXX
+Draw_Circle_M1:		LD DE,0				; Get the circle origin
+
+			LD A,E
+			ADD A,IXL
+			LD C,A
+			LD A,D
+			ADD A,IXH
+			LD B,A
+			CALL Draw_Circle_Plot		; Plot CX+X,CY+Y
+			LD A,E
+			SUB IXL
+			LD C,A
+			LD A,D
+			ADD A,IXH
+			LD B,A
+			CALL Draw_Circle_Plot		; Plot CX-X,CY+Y
+			LD A,E
+			ADD A,IXL
+			LD C,A
+			LD A,D
+			SUB IXH
+			LD B,A
+			CALL Draw_Circle_Plot		; Plot CX+X,CY-Y
+			LD A,E
+			SUB IXL
+			LD C,A
+			LD A,D
+			SUB IXH
+			LD B,A
+			CALL Draw_Circle_Plot		; Plot CY+X,CX-Y
+			LD A,D
+			ADD A,IXL
+			LD B,A
+			LD A,E
+			ADD A,IXH
+			LD C,A
+			CALL Draw_Circle_Plot		; Plot CY+X,CX+Y
+			LD A,D
+			SUB IXL
+			LD B,A
+			LD A,E
+			ADD A,IXH
+			LD C,A
+			CALL Draw_Circle_Plot		; Plot CY-X,CX+Y
+			LD A,D
+			ADD A,IXL
+			LD B,A
+			LD A,E
+			SUB IXH
+			LD C,A
+			CALL Draw_Circle_Plot		; Plot CY+X,CX-Y
+			LD A,D
+			SUB IXL
+			LD B,A
+			LD A,E
+			SUB IXH
+			LD C,A
+			CALL Draw_Circle_Plot		; Plot CX+X,CY-Y
+			EXX
+;
+; Do the incremental circle thing here
+;
+			BIT 7,H				; Check for Hl<=0
+			JR Z,Draw_Circle_1
+			ADD HL,DE			; Delta=Delta+D1
+			JR Draw_Circle_2		; 
+Draw_Circle_1:		ADD HL,BC			; Delta=Delta+D2
+			INC BC
+			INC BC				; D2=D2+2
+			DEC IXH				; Y=Y-1
+Draw_Circle_2:		INC BC				; D2=D2+2
+			INC BC
+			INC DE				; D1=D1+2
+			INC DE	
+			INC IXL				; X=X+1
+			JR Draw_Circle_Loop
+
+Draw_Circle_Plot:	LD A, 0				; The self-modded colour
+			JP Plot				; Jump to the plot routine
+		

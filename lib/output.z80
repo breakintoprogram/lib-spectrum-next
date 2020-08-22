@@ -1,0 +1,76 @@
+;
+; Title:	ZX Spectrum Next Standard Output Routines
+; Author:	Ben Versteeg
+; Link:		http://www.benophetinternet.nl/hobby/kmt.htm
+; Modified By:	Dean Belfield
+; Created:	22/08/2020
+; Last Updated:	22/08/2020
+;
+; Requires:
+;
+; Modinfo:
+;
+
+; A: Colour to fill with
+;
+Clear_Screen:		LD	C, %00000011
+			CALL 	Clear_Screen_Third
+			LD	C, %01000011
+			CALL 	Clear_Screen_Third
+			LD	C, %10000011
+Clear_Screen_Third:	PUSH 	BC
+			PUSH	AF
+			LD	A,C
+			LD	BC, 0x123B
+			OUT	(C),A
+			LD	DE, 0x0000
+			LD	BC, 0x4000
+			POP	AF
+1:			LD	(DE), A
+			INC	DE
+			DEC  	C
+			JR	NZ , 1B
+			DEC	B
+			JR	NZ, 1B
+			POP	BC
+			RET
+
+; Get pixel position
+; Pages in the correct 16K Layer 2 screen bank into 0x0000
+; B: Y coordinate
+; C: X coordinate
+; Returns:
+; HL: Address in memory (between 0x0000 and 0x3FFF)
+;
+Get_Pixel_Address:	PUSH	AF
+			PUSH	BC
+			LD 	L,C			; The low byte is the X coordinate
+			LD	A,B			; Get the Y coordinate
+			AND	0x3F			; Offset in bank
+			LD	H,A			; Store in high byte
+			LD	A,B			; Get the Y coordinate
+			AND	0xC0			; Get the bank number
+			LD	(Screen_Page), A	; Store the screen page
+			OR	0x03			; Set visible/write bits
+			LD	BC, 0x123B		; Port #
+			OUT	(C),A 			; Page in the screen bank
+			POP	BC
+			POP	AF
+			RET
+
+Pixel_Address_Down:	INC	H			; Increment the screen address
+			LD	A,H
+			AND	0x3F			; If still inside third
+			RET	NZ			; Then ret
+			LD	H,A			; Store H=0
+			LD	A,(Screen_Page)		; Increment the screen page
+			ADD	0x40
+			LD	(Screen_Page),A
+			PUSH	BC 
+			OR	0x03			; Set visibility/write bits
+			LD	BC, 0x123B		; Port #
+			OUT	(C),A 			; Page in the screen bank
+			POP	BC
+			RET
+
+Screen_Page:		DB	0
