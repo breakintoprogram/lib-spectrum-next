@@ -1,0 +1,568 @@
+;
+; Title:        Area 51
+; Author:       Dean Belfield
+; Started:	19/08/2020
+; Last Updated:	19/08/2020
+;
+; Requires:	
+;
+; Modinfo:
+;
+
+    			OPT --zxnext
+
+			DEVICE ZXSPECTRUMNEXT		; sjasmplus directive for SAVESNA at end
+
+Stack_Top:		EQU 0x0000
+IM2_Table:              EQU 0xFE00                              ; 256 byte page (+ 1 byte) for IM2
+IM2_JP:                 EQU 0xFDFD                              ; 3 bytes for JP routine under IM2 table
+Code_Start:		EQU 0x7FFD
+
+INITIALISE_SPRITE:	MACRO p_X, p_Y, p_PATTERN, p_LOGIC
+			LD (IY+Sprite_Pattern), p_PATTERN
+			LD (IY+Sprite_X+0), low  p_X
+			LD (IY+Sprite_X+1), high p_X
+			LD (IY+Sprite_Y+0), low  p_Y
+			LD (IY+Sprite_Y+1), high p_Y
+			LD (IY+Sprite_Logic+0), low  p_LOGIC
+			LD (IY+Sprite_Logic+1), high p_LOGIC 
+			ENDM
+
+			ORG Code_Start
+
+			JP Main
+
+SIN_TABLE:		LUA ALLPASS
+			for i = 0, 255 do
+				s = math.sin(i/128*math.pi)
+				t = s > 0 and 1 or s < 0 and -1 or 0
+				s = 2 * math.floor(math.abs(s)*128)
+				if t == -1 then s = s + 1 end
+				if s >= 256 then s = 255 end
+				_pc(string.format("DB %d", s))
+			end
+			ENDLUA
+
+			DEFINE SCREEN_BUFFER 0xE000		; Plot / draw to off-screen buffer
+
+SHAPE_BUFFER:		DS 256					; This should be aligned on a byte boundary
+POINT_BUFFER:		DS 16
+POLYGON_BUFFER:		DS 8,0
+SD:			EQU 256
+YC:			DW 0 
+XC:			DW 0
+ZC:			DW 256
+PHI:			DB 0
+THE:			DB 0
+PSI:			DB 0
+Debounce_Key:		DB 0xFF
+
+			include "../../../Spectrum/Z80/lib/macros.z80"
+			include "../../../Spectrum/Z80/lib/math.z80"
+			include "../lib/output.z80"
+			include "../lib/vector.z80"
+			include "../lib/vector_filled.z80"
+			include "../lib/mouse.z80"
+			
+Main:			DI
+			LD SP,Stack_Top
+			CALL Initialise_Interrupt
+			XOR A
+			CALL Clear_Screen
+
+			NEXTREG 0x07, 3			; CPU to 28Mhz
+			NEXTREG 0x43, %00010000		; Layer 2 to first palette
+			NEXTREG 0x40, 0			; Palette index 0
+			NEXTREG 0x15, %00100001		; Enable sprites & clipping, SLU priority
+
+			LD	A, 1
+			OUT	(254), A
+
+; Enable Layer 2
+; V = Visible
+; B = Bank
+; W = Write
+;				    BB--P-VW
+
+			NEXTREG 0x34, 0		; Select Sprite 0
+			LD 	B, 0		; Write out the 256 byte pattern data
+			LD 	HL, SPRITE
+1:			LD	A, (HL)
+			INC 	HL
+			OUT	(0x5B), A
+			DJNZ	1B
+
+			CALL Get_Sprite_Slot
+			INITIALISE_SPRITE 64,64,0,Sprite_Mouse
+
+1:			HALT 
+			CALL Render_Sprites
+			CALL Handle_Sprites
+			CALL Clear_Screen
+			LD IX,Cube
+			CALL Translate
+			CALL Draw_Shape
+
+			LD A,(THE): ADD A,3: LD (THE),A
+			LD A,(PSI): ADD A,1: LD (PSI),A
+			LD A,(PHI): ADD A,2: LD (PHI),A
+
+			JR 1B
+
+Sprite_Mouse:		CALL	Mouse
+			LD	A,(Mouse_Coords)
+			ADD	32
+			LD	(IX+Sprite_X),A
+			LD	A,0
+			ADC	0
+			LD	(IX+Sprite_X+1),A
+			LD	A,(Mouse_Coords+1)
+			ADD	32
+			LD	(IX+Sprite_Y),A
+			RET
+;
+; Interrupt routine
+;
+Initialise_Interrupt:   DI
+                        LD DE, IM2_Table                        ; The IM2 vector table (on page boundary)
+                        LD HL, IM2_JP                           ; Pointer for 3-byte interrupt handler
+                        LD A, D                                 ; Interrupt table page high address
+                        LD I, A                                 ; Set the interrupt register to that page
+                        LD A, L                                 ; Fill page with values
+1:                      LD (DE), A 
+                        INC E
+                        JR NZ, 1B:
+                        INC D                                   ; In case data bus bit 0 is not 0, we
+                        LD (DE), A                              ; put an extra byte in here
+                        LD (HL), 0xC3                           ; Write out the interrupt handler, a JP instruction
+                        INC L
+                        LD (HL), low Interrupt                  ; Store the address of the interrupt routine in
+                        INC L
+                        LD (HL), high Interrupt
+                        IM 2                                    ; Set the interrupt mode
+                        EI                                      ; Enable interrupts
+                        RET
+
+Interrupt:		DI
+			PUSH AF
+			PUSH BC
+			PUSH DE
+			PUSH HL
+			PUSH IX
+			EXX
+			EX AF,AF'
+			PUSH AF
+			PUSH BC
+			PUSH DE
+			PUSH HL
+			PUSH IY
+
+			POP IY
+			POP HL
+			POP DE
+			POP BC
+			POP AF
+			EXX
+			EX AF,AF'
+			POP IX
+			POP HL
+			POP DE
+			POP BC
+			POP AF
+			EI
+			RET		
+
+; This routine clears the sprite logic table
+;
+Clear_Sprite_Slots:	LD IX, Sprite_Data
+			LD DE, Sprite_Data_Block_Size
+			LD B, Sprite_Max
+1:			LD (IX+Sprite_Logic+1), 0
+			ADD IX, DE
+			DJNZ 1B
+			RET	
+
+; This routine goes through the sprite logic table and finds the next available
+; slot
+; Returns
+;  A: Z if slot found, NZ if no more slote available
+; IY: Address of sprite slot (usually called from logic, which uses IX)
+;
+Get_Sprite_Slot:	LD IY, Sprite_Data
+			LD DE, Sprite_Data_Block_Size
+			LD B, Sprite_Max
+1:			LD A, (IY+Sprite_Logic+1)
+			AND A
+			RET Z
+			ADD IY, DE
+			DJNZ 1B
+			RET
+
+; This routine goes through the sprite logic table and runs the logic routine for each sprite
+;
+Handle_Sprites: 	LD IX,Sprite_Data			; The sprite data block
+			LD B,Sprite_Max				; The number of sprites to handle
+1:			LD A,(IX+Sprite_Logic+1)		; Get the high address of the handler routine
+			AND A					; If it is zero
+			JR Z,2F					; Then don't process the sprite
+			PUSH BC					; Push the loop counter
+			PUSH IX					; Push the index register
+			LD HL,Handle_Sprites_RA			; Set to the return address
+			PUSH HL					; Push the return address (to simulate a call)
+			LD H,A					; Set H to the previously fetched high address of handler routine
+			LD L,(IX+Sprite_Logic)			; Fetch the low address of the handler routine
+			JP (HL)					; Jump to the handler. Return address is stacked, so RET from that routine
+Handle_Sprites_RA:	POP IX					; Pop the index register
+			POP BC					; Pop the loop counter
+2:			LD DE,Sprite_Data_Block_Size		; Go to next sprite data block
+			ADD IX,DE
+			DJNZ 1B					; Loop until all sprites have been processed
+			RET
+
+; Render the sprites
+;
+Render_Sprites:		LD IX,Sprite_Data
+			LD B,Sprite_Max
+			LD C,0
+1:			LD A,(IX+Sprite_Logic+1)
+			AND A
+			JR Z, 2F
+			LD A,C: NEXTREG 0x34, A
+			LD A,(IX+Sprite_X+0): NEXTREG 0x35, A
+			LD A,(IX+Sprite_Y+0): NEXTREG 0x36, A
+			LD A,(IX+Sprite_X+1)
+			AND 0x01
+			NEXTREG 0x37, A
+			NEXTREG 0x38, %10000000
+			INC C
+2:			LD DE,Sprite_Data_Block_Size
+			ADD IX,DE
+			DJNZ 1B
+			RET
+
+; Render the shape
+; IX: Coordinate data
+;
+Draw_Shape:		LD IY,POINT_BUFFER
+			LD B,(IX+1)
+1:			LD DE,POINT_BUFFER
+			PUSH BC	
+			LD A,(IX+2)
+			ADD A,A
+			ADD A,A 
+			LD H,high SHAPE_BUFFER
+			LD L,A
+			LDI 
+			LDI 
+			LDI 
+			LDI 
+			LD A,(IX+3)
+			ADD A,A
+			ADD A,A 
+			LD H,high SHAPE_BUFFER
+			LD L,A
+			LDI 
+			LDI 
+			LDI 
+			LDI 
+			LD A,(IX+4)
+			ADD A,A
+			ADD A,A 
+			LD H,high SHAPE_BUFFER
+			LD L,A
+			LDI 
+			LDI 
+			LDI 
+			LDI 
+			LD A,(IX+5)
+			ADD A,A
+			ADD A,A 
+			LD H,high SHAPE_BUFFER
+			LD L,A
+			LDI 
+			LDI 
+			LDI 
+			LDI 
+			CALL Backface_Cull
+			LD L,(IX+6)
+			CALL NZ,Draw_Polygon
+			LD BC,5
+			ADD IX,BC 
+			POP BC
+			DJNZ 1B
+			RET 
+
+; Draw a polygon
+;
+Draw_Polygon:		LD A,(IY+0): LD (POLYGON_BUFFER+0),A
+			LD A,(IY+2): LD (POLYGON_BUFFER+1),A
+			LD A,(IY+4): LD (POLYGON_BUFFER+2),A
+			LD A,(IY+6): LD (POLYGON_BUFFER+3),A
+			LD A,(IY+8): LD (POLYGON_BUFFER+4),A
+			LD A,(IY+10): LD (POLYGON_BUFFER+5),A
+			LD A,(IY+12): LD (POLYGON_BUFFER+6),A
+			LD A,(IY+14): LD (POLYGON_BUFFER+7),A
+			PUSH IX 
+			PUSH IY
+			LD IY,POLYGON_BUFFER
+			LD A,L
+			CALL Draw_Quad_Filled
+			POP IY
+			POP IX
+			RET
+; Translate
+; IX: Coordinate data
+;
+Translate:		LD B,(IX+0)
+			XOR A
+			LD (DIVISOR+2),A
+			LD IY,SHAPE_BUFFER
+0:			PUSH BC 
+			LD E,(IX+3)
+			LD D,(IX+2)
+			LD A,(PHI)
+			CALL Trig_Rotate
+			LD E,A 
+			EX AF,AF 
+			PUSH AF 
+			LD D,(IX+1) 
+			LD A,(THE) 
+			CALL Trig_Rotate 
+			LD HL,(ZC)
+			CP 128 
+			CCF 
+			LD E,A
+			SBC A,A 
+			LD D,A 
+			SBC HL,DE 
+			LD (DIVISOR),HL 
+			EX AF,AF 
+			LD D,A 
+			POP AF 
+			LD E,A 
+			LD A,(PSI) 
+			CALL Trig_Rotate 
+			EX AF,AF 
+			PUSH AF 
+			EX AF,AF 
+
+			LD HL,(YC) 
+			CALL Perspective
+			LD DE,96
+			ADD HL,DE
+			LD (IY+2),L 
+			LD (IY+3),H 
+			POP AF
+			LD HL,(XC) 
+			CALL Perspective
+			LD DE,128
+			ADD HL,DE 
+			LD (IY+0),L
+			LD (IY+1),H 
+
+			LD BC,3
+			ADD IX,BC 
+			INC BC 
+			ADD IY,BC
+			POP BC 
+			DJNZ 0B
+			RET
+		
+Perspective:		CP 128 
+			CCF 
+			LD E,A 
+			SBC A,A 
+			LD D,A 
+			ADD HL,DE 
+			EX DE,HL
+			BIT 7,D 
+			JR Z,1F
+			XOR A
+			LD H,A 
+			LD L,A 
+			SBC HL,DE 
+			EX DE,HL 
+			LD BC,SD 
+			CALL MUL24 
+			LD (DIVIDEND+2),A 
+			LD (DIVIDEND),HL
+			CALL DIV24 
+			EX DE,HL 
+			LD HL,65535
+			AND A 
+			SBC HL,DE 
+			CPL 
+			LD DE,1
+			ADD HL,DE 
+			ADC A,0 
+			RET 
+1:			LD BC,SD 
+			CALL MUL24 
+			LD (DIVIDEND+2),A 
+			LD (DIVIDEND),HL 
+			JP DIV24 
+
+Backface_Cull:		LD BC,(POINT_BUFFER)
+			LD HL,(POINT_BUFFER+6)
+			LD DE,(POINT_BUFFER+10)
+			CALL 1F
+			PUSH AF 
+			PUSH HL 
+			LD BC,(POINT_BUFFER+4)
+			LD HL,(POINT_BUFFER+10)
+			LD DE,(POINT_BUFFER+2)
+			CALL 1F 
+			POP DE 
+			POP BC 
+			ADD HL,DE 
+			ADC A,B 
+			PUSH AF 
+			PUSH HL 
+			LD BC,(POINT_BUFFER+8)
+			LD HL,(POINT_BUFFER+2)
+			LD DE,(POINT_BUFFER+6)
+			CALL 1F
+			POP DE
+			POP BC 
+			ADD HL,DE
+			ADC A,B 
+			BIT 7,A 
+			RET 
+1:			OR A 
+			SBC HL,DE 
+			EX DE,HL 
+			JP M,2F
+			BIT 7,B 
+			JP Z,MUL24 
+			XOR A 
+			LD H,A 
+			LD L,A 
+			SBC HL,BC 
+			LD B,H 
+			LD C,L 
+			JP MUL24_NEG 
+2:			XOR A 
+			LD H,A 
+			LD L,A 
+			SBC HL,DE 
+			EX DE,HL 
+			BIT 7,B 
+			JP Z,MUL24_NEG 
+			XOR A
+			LD H,A 
+			LD L,A 
+			SBC HL,BC 
+			LD B,H 
+			LD C,L 
+			JP MUL24 
+
+; Trig rotation
+; A =COS(D)+SIN(E)
+; A'=COS(D)-SIN(E)
+;
+Trig_Rotate:		PUSH DE 
+			LD (Trig_Rotate1+1),A 
+			LD C,E 
+			CALL SIN 
+			LD E,A 
+Trig_Rotate1:		LD A,0
+			LD C,D 
+			CALL COS 
+			SUB E 
+			EX AF,AF 
+			POP DE 
+			LD A,(Trig_Rotate1+1) 
+			LD C,E 
+			CALL COS 
+			LD E,A 
+			LD A,(Trig_Rotate1+1) 
+			LD C,D 
+			CALL SIN 
+			ADD A,E 
+			RET 
+
+; Basic trig functions
+; A=TRIG(A)*C
+; 
+COS:			ADD A,64
+SIN:			LD H,high SIN_TABLE
+			BIT 7,A 
+			JR NZ,1F 
+			LD L,A
+			LD B,(HL)
+			LD A,C 
+			AND A 
+			JP P,MUL8_DIV256 
+			NEG 
+			LD C,A 
+			JP MUL8_DIV256_NEG 
+1:			AND 127
+			LD L,A 
+			LD B,(HL) 
+			LD A,C 
+			AND A 
+			JP P,MUL8_DIV256_NEG 
+			NEG 
+			LD C,A 
+			JP MUL8_DIV256 
+
+Cube:			DB 8
+			DB -40,40,40
+			DB 40,40,40
+			DB 40,-40,40
+			DB -40,-40,40
+			DB -40,40,-40
+			DB 40,40,-40
+			DB 40,-40,-40
+			DB -40,-40,-40
+			DB 6
+			DB 0,1,2,3, 16
+			DB 0,4,5,1, 102
+			DB 7,6,5,4, 55
+			DB 3,2,6,7, 233
+			DB 1,5,6,2, 79
+			DB 0,3,7,4, 199
+
+; Sprite data
+;
+Sprite_Pattern:		EQU 0x00 ; The sprite pattern to use
+Sprite_X:		EQU 0x01 ; 16 bits, only least significant 9 used
+Sprite_Y:		EQU 0x03 ; 16 bits, only least significant 8 used
+Sprite_Logic:		EQU 0x05 ; Address of move routine - 0x0000 = no routine
+Sprite_Flags:		EQU 0x06 ; Game flags
+Sprite_Attr2:		EQU 0x07 ; Bit 0 is left blank for MSB of Sprite X
+Sprite_Attr3:		EQU 0x08 ; Bit 7 is set to make sprite visible
+Sprite_Data1:		EQU 0x09 ;
+
+Sprite_Data_Block_Size:	EQU 0x0A
+Sprite_Max:		EQU 0x10
+
+Sprite_Data:		DEFS (Sprite_Max * Sprite_Data_Block_Size), 0
+
+; Sprite graphic
+;
+SPRITE:			DB 0x04,0x04,0x04,0x04,0x04,0x04,0x04,0xE3,0xE3,0xE3,0xE3,0xE3,0xE3,0xE3,0xE3,0xE3
+			DB 0x04,0xFF,0xFF,0xFF,0xFF,0xFF,0x04,0xE3,0xE3,0xE3,0xE3,0xE3,0xE3,0xE3,0xE3,0xE3
+			DB 0x04,0xFF,0xFB,0xFB,0xFB,0xFF,0x04,0xE3,0xE3,0xE3,0xE3,0xE3,0xE3,0xE3,0xE3,0xE3
+			DB 0x04,0xFF,0xFB,0xF5,0xF5,0xFB,0xFF,0x04,0xE3,0xE3,0xE3,0xE3,0xE3,0xE3,0xE3,0xE3
+			DB 0x04,0xFF,0xFB,0xF5,0xA8,0xA8,0xFB,0xFF,0x04,0xE3,0xE3,0xE3,0xE3,0xE3,0xE3,0xE3
+			DB 0x04,0xFF,0xFF,0xFB,0xA8,0x44,0xA8,0xFB,0xFF,0x04,0xE3,0xE3,0xE3,0xE3,0xE3,0xE3
+			DB 0x04,0x04,0x04,0xFF,0xFB,0xA8,0x44,0xA8,0xFB,0xFF,0x04,0xE3,0xE3,0xE3,0xE3,0xE3
+			DB 0xE3,0xE3,0xE3,0x04,0xFF,0xFB,0xA8,0x44,0x44,0xFB,0xFF,0x04,0xE3,0x04,0xE3,0xE3
+			DB 0xE3,0xE3,0xE3,0xE3,0x04,0xFF,0xFB,0x44,0x44,0x44,0xFB,0xFF,0x04,0x4D,0x04,0xE3
+			DB 0xE3,0xE3,0xE3,0xE3,0xE3,0x04,0xFF,0xFB,0x44,0x44,0x44,0x44,0xFA,0x4D,0x04,0xE3
+			DB 0xE3,0xE3,0xE3,0xE3,0xE3,0xE3,0x04,0xFF,0xFB,0x44,0xFF,0xF5,0x44,0x04,0xE3,0xE3
+			DB 0xE3,0xE3,0xE3,0xE3,0xE3,0xE3,0xE3,0x04,0xFF,0x44,0xF5,0xA8,0x04,0xE3,0xE3,0xE3
+			DB 0xE3,0xE3,0xE3,0xE3,0xE3,0xE3,0xE3,0xE3,0x04,0xFA,0x44,0x04,0xA8,0x04,0xE3,0xE3
+			DB 0xE3,0xE3,0xE3,0xE3,0xE3,0xE3,0xE3,0x04,0x4D,0x4D,0x04,0xE3,0x04,0xF5,0x04,0xE3
+			DB 0xE3,0xE3,0xE3,0xE3,0xE3,0xE3,0xE3,0xE3,0x04,0x04,0xE3,0xE3,0xE3,0x04,0xFA,0x04
+			DB 0xE3,0xE3,0xE3,0xE3,0xE3,0xE3,0xE3,0xE3,0xE3,0xE3,0xE3,0xE3,0xE3,0xE3,0x04,0x04
+
+Code_Length:		EQU $-Code_Start+1
+
+			SAVENEX OPEN "Z80/Demo/demo_3d.nex", Code_Start
+			SAVENEX CORE 3, 0, 0
+			SAVENEX CFG  0
+			SAVENEX BAR  1, 0xE0, 50, 25
+			SAVENEX AUTO
+			SAVENEX CLOSE
