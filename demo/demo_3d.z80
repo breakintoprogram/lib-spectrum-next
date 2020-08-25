@@ -2,12 +2,13 @@
 ; Title:        3D Demo
 ; Author:       Dean Belfield
 ; Started:	19/08/2020
-; Last Updated:	19/08/2020
+; Last Updated:	24/08/2020
 ;
 ; Requires:	
 ;
 ; Modinfo:
 ;
+; 24/08/2020:	Now uses DMA to clear screen and includes Next maths library. Some optimisations.
 
     			OPT --zxnext
 
@@ -58,11 +59,12 @@ PSI:			DB 0
 Debounce_Key:		DB 0xFF
 
 			include "../../../Spectrum/Z80/lib/macros.z80"
-			include "../../../Spectrum/Z80/lib/math.z80"
+			include "../lib/math.z80"
 			include "../lib/output.z80"
 			include "../lib/vector.z80"
 			include "../lib/vector_filled.z80"
 			include "../lib/mouse.z80"
+			include "../lib/dma.z80"
 			
 Main:			DI
 			LD SP,Stack_Top
@@ -75,8 +77,7 @@ Main:			DI
 			NEXTREG 0x40, 0			; Palette index 0
 			NEXTREG 0x15, %00100001		; Enable sprites & clipping, SLU priority
 
-			LD	A, 1
-			OUT	(254), A
+			LD	A, 0: OUT (254), A
 
 ; Enable Layer 2
 ; V = Visible
@@ -95,19 +96,32 @@ Main:			DI
 			CALL Get_Sprite_Slot
 			INITIALISE_SPRITE 64,64,0,Sprite_Mouse
 
-1:			HALT 
+1:			HALT
+			LD A,1: OUT(254),A
 			CALL Render_Sprites
 			CALL Handle_Sprites
+			LD A,2: OUT(254),A
+			XOR A
 			CALL Clear_Screen
+			LD A,3: OUT(254),A
+;			LD B,150
+;			LD C,88
+;			LD D,55
+;			LD A,233
+;			CALL Draw_Circle_Filled
 			LD IX,Cube
 			CALL Translate
+			LD A,4: OUT(254),A
 			CALL Draw_Shape
-
+;			LD IX,Message
+;			CALL Print_String
 			LD A,(THE): ADD A,3: LD (THE),A
 			LD A,(PSI): ADD A,1: LD (PSI),A
-			LD A,(PHI): ADD A,2: LD (PHI),A
-
+			LD A,(PHI): ADD A,2: LD (PHI),A	
+			LD A,0: OUT(254),A
 			JR 1B
+
+Message:		DB	8,183,"Demo by BreakIntoProgram.co.uk",0xFF
 
 Sprite_Mouse:		CALL	Mouse
 			LD	A,(Mouse_Coords)
@@ -348,15 +362,13 @@ Translate:		LD B,(IX+0)
 
 			LD HL,(YC) 
 			CALL Perspective
-			LD DE,96
-			ADD HL,DE
+			ADD HL,96
 			LD (IY+2),L 
 			LD (IY+3),H 
 			POP AF
 			LD HL,(XC) 
 			CALL Perspective
-			LD DE,128
-			ADD HL,DE 
+			ADD HL,128 
 			LD (IY+0),L
 			LD (IY+1),H 
 
