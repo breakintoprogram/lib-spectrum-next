@@ -1,0 +1,226 @@
+;
+; Title:	ZX Spectrum Next Math Routines
+; Author:	Dean Belfield
+; Created:	23/08/2020
+; Last Updated:	23/08/2020
+;
+; Requires:
+;
+; Modinfo:
+; 
+
+; 8-bit unsigned quick multiply, with divide by 256 and negative result
+; Returns A=-(B*C)/256
+;
+MUL8_DIV256_NEG:	CALL 	MUL8_DIV256
+			NEG 
+			RET 
+
+; 8-bit unsigned quick multiply, with divide by 256
+; Returns A=(B*C)/256
+;
+MUL8_DIV256:		EX	DE,HL
+			LD 	D,B
+			LD	E,C
+			MUL	D,E
+			LD	A,D
+			EX	DE,HL
+			RET
+
+; 16-bit signed multiply
+; Returns BC=D*E 
+; Main entry point: QMUL16S
+;
+1:			LD 	A,D 
+			NEG 
+			LD 	D,A 
+			BIT 	7,E 
+			JR Z	,MUL16_NEG 
+			LD 	A,E 
+			NEG 
+			LD 	E,A 
+			JR 	MUL16 
+MUL16S:			BIT 	7,D 
+			JR 	NZ,1B
+			BIT 	7,E 
+			JR 	Z,MUL16 
+			LD 	A,E 
+			NEG
+			LD 	E,A
+
+; 16-bit unsigned multiply with negative result
+; Returns BC=D*E
+;	
+MUL16_NEG:		CALL	MUL16 
+			XOR 	A
+			LD 	H,A 
+			LD 	L,A 
+			SBC 	HL,BC 
+			LD 	B,H 
+			LD 	C,L 
+			RET 
+
+; 16-bit unsigned multiply
+; Returns BC=D*E
+;
+MUL16:			MUL	D,E
+			LD	B,D
+			LD	C,E
+			RET
+
+
+; Same as MUL24, but the answer is negative
+; AHL=-(DE*BC)
+;
+MUL24_NEG:		CALL 	MUL24 
+			XOR 	255 
+			EX 	DE,HL 
+			LD 	HL,0 
+			SBC 	HL, DE 
+			CCF 
+			ADC 	A,0 
+			RET 
+
+; Multiply (24 bit)
+; AHL=DE*BC
+;
+MUL24:			XOR 	A 
+			LD 	H,A 
+			LD 	L,A 
+			EX 	AF,AF 
+			LD 	A,16 
+1:			EX 	AF,AF 
+			ADD 	HL,HL 
+			RLA
+			RL 	C 
+			RL	B 
+			JR 	NC, 2F
+			ADD 	HL,DE 
+			ADC 	A,0 
+2:			EX 	AF,AF 
+			DEC 	A 
+			JR 	NZ,1B
+			EX 	AF,AF 
+			RET 
+
+; Divide (16 bit)
+; Returns HL=HL/BC
+;
+DIV16:			PUSH 	HL 
+			XOR 	A 
+			LD 	H,A 
+			LD 	L,A 
+			EXX 
+			LD 	B,16 
+			POP 	HL 
+1:			ADC 	HL,HL 
+			EXX 
+			ADC 	HL,HL
+			RLA 
+			SBC 	HL,BC 
+			JR 	NC,2F
+			ADD 	HL,BC 
+2:			CCF 
+			EXX 
+			DJNZ 	1B
+			ADC 	HL,HL 
+			RET 
+
+; Divide (24 bit)
+; Returns result in AHL
+;
+DIVIDEND:		DS 3
+DIVISOR:		DS 3
+
+DIV24:			LD 	BC,(DIVISOR)
+			LD 	A,(DIVISOR+2)
+			LD 	D,A
+			XOR 	A 
+			LD 	H,A 
+			LD 	L,A 
+			EXX 
+			LD 	B,24 
+			LD 	HL,(DIVIDEND) 
+			LD 	A,(DIVIDEND+2) 
+			LD 	E,A 
+			XOR 	A
+1:			ADC 	HL,HL 
+			RL	E
+			EXX 
+			ADC 	HL,HL
+			RLA 
+			SBC 	HL,BC 
+			SBC 	D 
+			JR 	NC,2F
+			ADD 	HL,BC 
+			ADC 	D 
+2:			CCF 
+			EXX 
+		 	DJNZ 	1B
+			ADC 	HL,HL 
+			RL 	E 
+			LD 	A,E 
+			RET 		
+
+; Square Root (16 bit)
+; HL=number to find square root of
+; Returns result in A
+;
+SQR16: 			LD	DE,1
+			XOR	A
+			DEC	A
+1:			SBC	HL,DE
+			INC	DE
+			INC	DE
+			INC	A
+			JR	NC,1B
+			RET
+
+; Square Root (32 bit)
+; BCDE=number to find square root of
+; Returns result in DE
+;
+SQR32:			LD	A,B 
+			PUSH	DE 
+			POP	IX 
+			LD	D,0
+			LD	E,D 
+			LD	H,D 
+			LD	L,D
+			LD	B,16 
+1:			SUB	0x40 
+			SBC	HL,DE 
+			JR	NC,2F
+			ADD	A,0x40
+			ADC	HL,DE
+2:			CCF 
+			RL	E 
+			RL	D 
+			ADD	IX,IX 
+			RL	C 
+			RLA 
+			ADC 	HL,HL 
+			DJNZ 	1B 
+			RET 
+
+; 16 bit random number routine I found on the web
+; Returns a pseudo-random number in the HL register
+;
+RND16_SEED:		EQU	12345
+
+RND16:			LD 	DE,RND16_SEED
+			LD 	A,D
+			LD 	H,E
+			LD 	L,253
+			OR 	A
+			SBC 	HL,DE
+			SBC 	A,0
+			SBC 	HL,DE
+			LD 	D,0
+			SBC 	A,D
+			LD 	E,A
+			SBC 	HL,DE
+			JR 	NC,1F
+			INC 	HL
+1:			LD 	(RND16+1),HL
+			RET
