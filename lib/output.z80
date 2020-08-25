@@ -2,12 +2,13 @@
 ; Title:	ZX Spectrum Next Standard Output Routines
 ; Author:	Dean Belfield
 ; Created:	22/08/2020
-; Last Updated:	22/08/2020
+; Last Updated:	24/08/2020
 ;
-; Requires:
+; Requires:	dma
 ;
 ; Modinfo:
 ;
+; 24/08/2020:	Clear_Screen now uses DMA. Added text output. Some optimisation of code
 
 ; A: Colour to fill with
 ;
@@ -16,21 +17,17 @@ Clear_Screen:		LD	C, %00000011
 			LD	C, %01000011
 			CALL 	Clear_Screen_Third
 			LD	C, %10000011
-Clear_Screen_Third:	PUSH 	BC
-			PUSH	AF
+
+Clear_Screen_Third:	PUSH	AF
 			LD	A,C
 			LD	BC, 0x123B
 			OUT	(C),A
-			LD	DE, 0x0000
-			LD	BC, 0x4000
 			POP	AF
-1:			LD	(DE), A
-			INC	DE
-			DEC  	C
-			JR	NZ , 1B
-			DEC	B
-			JR	NZ, 1B
-			POP	BC
+			PUSH	AF
+			LD	DE,0x0000
+			LD	BC,0x4000
+			CALL	FillDMA
+			POP	AF
 			RET
 
 ; Get pixel position
@@ -49,7 +46,7 @@ Get_Pixel_Address:	PUSH	AF
 			LD	A,B			; Get the Y coordinate
 			AND	0xC0			; Get the bank number
 			LD	(Screen_Page), A	; Store the screen page
-			OR	0x03			; Set visible/write bits
+			OR	%00000011		; Set visible/write bits
 			LD	BC, 0x123B		; Port #
 			OUT	(C),A 			; Page in the screen bank
 			POP	BC
@@ -65,10 +62,79 @@ Pixel_Address_Down:	INC	H			; Increment the screen address
 			ADD	0x40
 			LD	(Screen_Page),A
 			PUSH	BC 
-			OR	0x03			; Set visibility/write bits
+			OR	%00000011		; Set visibility/write bits
 			LD	BC, 0x123B		; Port #
 			OUT	(C),A 			; Page in the screen bank
 			POP	BC
+			RET
+
+; Print String Data
+; First two bytes of string contain X and Y char position, then the string
+; Individual strings are terminated with 0xFE
+; End of data is terminated with 0xFF
+; IX: Address of string
+;
+Print_String:		LD 	C,(IX+0)		; Fetch the X coordinate
+			INC 	IX			; Increase HL to the next memory location
+			LD 	B,(IX+0)		; Fetch the Y coordinate
+			INC 	IX			; Increase HL to the next memory location
+			CALL 	Get_Pixel_Address	; Calculate the screen address (in DE)
+Print_String_0:		LD 	A,(IX)			; Fetch the character to print
+			INC 	IX			; Increase HL to the next character
+			CP 	0xFE			; Compare with 0xFE
+			JR 	Z,Print_String		; If it is equal to 0xFE then loop back to print next string
+			RET 	NC			; If it is greater or equal to (carry bit set) then
+			CALL 	Print_Char		; Print the character
+			ADD	HL,8
+			JR 	Print_String_0		; Loop back to print next character
+			RET
+
+; Print a single character out to an X/Y position
+;  A: Character to print
+;  C: X Coordinate
+;  B: Y Coordinate
+;
+Print_Char_At:		PUSH 	AF
+			CALL 	Get_Pixel_Address
+			POP 	AF			; Fall through to Print_Char
+;
+; Print a single character out to a screen address
+;  A:  Character to print
+;  HL: Screen address to print character at
+; No SM code here - needs to be re-enterent if called on interrupt
+;
+Print_Char:		PUSH 	HL
+			LD 	D, 8			; Multiply the character byte by 8
+			LD 	E, A
+			MUL 	D,E
+			LD 	A,0x3C			; Address of character set in ROM (HIGH)
+			ADD 	A,D
+			LD 	D,A
+			CALL 	Print_UDG8
+			POP 	HL
+			RET 	
+
+; Print a UDG (Single Height)
+; DE - Character data
+; HL - Screen address
+;  C - Colour
+;
+Print_UDG8:		LD	B,8			; Loop counter
+			LD	C,255
+1:			PUSH	BC
+			PUSH	HL
+			LD	A,(DE)			; Get the byte from the ROM into A
+			LD	B,8
+2:			SLA	A
+			JR	NC, 3F
+			LD	(HL),C
+3:			INC	L
+			DJNZ 	2B
+			INC 	DE			; Goto next byte of character
+			POP	HL
+			POP	BC
+			INC	H			; Goto next line on screen
+			DJNZ 	1B			; Loop around whilst it is Not Zero (NZ)
 			RET
 
 Screen_Page:		DB	0
