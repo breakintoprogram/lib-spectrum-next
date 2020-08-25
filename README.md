@@ -13,4 +13,6 @@ A suite of Z80 modules for the ZX Spectrum Next with routines for:
 - Demo files in the /Demo directory included to give you a quick-start
 - Some library files may be required from my other repository lib-spectrum
 
-For more information visit [Break Into Program](http://www.breakintoprogram.co.uk/programming/assembly-language/z80/z80-development-toolchain "Break Into Program")
+##### NB
+- The DMA library routine is adapted from [one in this article written by Jim Bagley](https://www.specnext.com/the-zxndma/)
+- The Kempston Mouse library routine is adapted from [this one written by Ben Versteeg](http://www.benophetinternet.nl/hobby/kmt.htm)
