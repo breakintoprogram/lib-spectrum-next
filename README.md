@@ -4,6 +4,8 @@ A suite of Z80 modules for the ZX Spectrum Next with routines for:
 - Reading the mouse
 - Vector graphics (fast line, circle, and plot routines)
 - Filled vector graphics with simple flat texturing (triangle, quadrilateral and circle)
+- DMA
+- Maths (taking advantage of the extended Z80N opcodes)
 
 ##### Build the demos
 - The code is written to cross-assemble in sjasmplus on PC, Mac or Linux
