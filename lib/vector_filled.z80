@@ -2,12 +2,13 @@
 ; Title:	ZX Spectrum Next Vector Output Routines (Layer 2)
 ; Author:	Dean Belfield
 ; Created:	22/08/2020
-; Last Updated:	22/08/2020
+; Last Updated:	24/08/2020
 ;
 ; Requires:	output, macro
 ;
 ; Modinfo:
 ;
+; 24/08/2020:	Optimised Draw_Vector_Table and Draw_Horz_Line 
 
 ; EQUS
 ;
@@ -317,13 +318,11 @@ Draw_Vector_Table:	LD C,L				; Store the Y position in C
 			INC H				; Increment H to the second table (they're a page apart)
 			LD E,(HL)			; Get X2 from the second table
 			POP HL				; Pop screen position back off stack
-			PUSH HL				; And stick it back on again
-			PUSH BC
-Draw_Vector_Table_1:	LD C,0				; The colour
+			PUSH BC				; Stack the counter and the scanline index
+Draw_Vector_Table_1:	LD C,0				; The colour (self-modded)
 			CALL Draw_Horz_Line
 			POP BC
-			POP HL
-			INC C
+			INC C				; Go to next line in the scanline table
 			CALL Pixel_Address_Down		; Go to next line in screen memory
 			DJNZ 1B
 			RET
@@ -334,8 +333,7 @@ Draw_Vector_Table_1:	LD C,0				; The colour
 ; E = X pixel position 2
 ; C = Colour
 ;
-Draw_Horz_Line:		PUSH HL				; Push screen address
-			LD A,E				; Check if D > E
+Draw_Horz_Line:		LD A,E				; Check if D > E
 			CP D 
 			JR NC,0F
 			LD E,D				; Swap D and E
@@ -352,10 +350,8 @@ Draw_Horz_Line:		PUSH HL				; Push screen address
 			LD L,D
 			JR NZ, 1F			; If not zero, then skip to draw line
 			LD (HL),C
-			POP HL				; POP the screen address back off the stack	
 			RET 
 1:			LD (HL),C
 			INC L
 			DJNZ 1B
-			POP HL 				; POP the screen address back off the stack
 			RET
