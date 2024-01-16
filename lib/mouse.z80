@@ -15,7 +15,7 @@
 ;
 Mouse:			LD BC,0xFADF		; Read the buttons
 			IN A,(C)
-			AND 0x00000011
+			AND %00000011
 			LD (Mouse_Buttons),A
 			LD HL,(Mouse_Coords)	; The current coords
 			LD BC,0xFBDF		; The mouse port for X
