@@ -2,7 +2,7 @@
 ; Title:        3D Demo
 ; Author:       Dean Belfield
 ; Started:	19/08/2020
-; Last Updated:	20/08/2025
+; Last Updated:	21/08/2025
 ;
 ; Requires:	
 ;
@@ -10,6 +10,7 @@
 ;
 ; 24/08/2020:	Now uses DMA to clear screen and includes Next maths library. Some optimisations.
 ; 20/08/2025:	Fixed macro path, improved SIN and COS functions
+; 21/08/2025:	Simplified SIN_TABLE generation code
 
     			OPT --zxnext
 
@@ -50,12 +51,8 @@ Debounce_Key:		DB 0xFF
 
 SIN_TABLE:		LUA ALLPASS
 			for i = 0, 127 do
-				s = math.sin(i/128*math.pi)
-				t = s > 0 and 1 or s < 0 and -1 or 0
-				s = 2 * math.floor(math.abs(s)*128)
-				if t == -1 then s = s + 1 end
-				if s >= 256 then s = 255 end
-				_pc(string.format("DB %d", s))
+				v = math.floor(math.abs(math.sin(i/128*math.pi))*255)
+				_pc(string.format("DB %d", v))
 			end
 			ENDLUA
 
