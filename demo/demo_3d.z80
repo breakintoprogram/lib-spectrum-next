@@ -2,13 +2,14 @@
 ; Title:        3D Demo
 ; Author:       Dean Belfield
 ; Started:	19/08/2020
-; Last Updated:	24/08/2020
+; Last Updated:	20/08/2025
 ;
 ; Requires:	
 ;
 ; Modinfo:
 ;
 ; 24/08/2020:	Now uses DMA to clear screen and includes Next maths library. Some optimisations.
+; 20/08/2025:	Fixed macro path, improved SIN and COS functions
 
     			OPT --zxnext
 
@@ -33,17 +34,6 @@ INITIALISE_SPRITE:	MACRO p_X, p_Y, p_PATTERN, p_LOGIC
 
 			JP Main
 
-SIN_TABLE:		LUA ALLPASS
-			for i = 0, 255 do
-				s = math.sin(i/128*math.pi)
-				t = s > 0 and 1 or s < 0 and -1 or 0
-				s = 2 * math.floor(math.abs(s)*128)
-				if t == -1 then s = s + 1 end
-				if s >= 256 then s = 255 end
-				_pc(string.format("DB %d", s))
-			end
-			ENDLUA
-
 			DEFINE SCREEN_BUFFER 0xE000		; Plot / draw to off-screen buffer
 
 SHAPE_BUFFER:		DS 256					; This should be aligned on a byte boundary
@@ -58,7 +48,18 @@ THE:			DB 0
 PSI:			DB 0
 Debounce_Key:		DB 0xFF
 
-			include "../../../Spectrum/Z80/lib/macros.z80"
+SIN_TABLE:		LUA ALLPASS
+			for i = 0, 127 do
+				s = math.sin(i/128*math.pi)
+				t = s > 0 and 1 or s < 0 and -1 or 0
+				s = 2 * math.floor(math.abs(s)*128)
+				if t == -1 then s = s + 1 end
+				if s >= 256 then s = 255 end
+				_pc(string.format("DB %d", s))
+			end
+			ENDLUA
+
+			include "../lib/macros.z80"
 			include "../lib/math.z80"
 			include "../lib/output.z80"
 			include "../lib/vector.z80"
@@ -496,27 +497,31 @@ Trig_Rotate1:		LD A,0
 ; Basic trig functions
 ; A=TRIG(A)*C
 ; 
-COS:			ADD A,64
-SIN:			LD H,high SIN_TABLE
-			BIT 7,A 
-			JR NZ,1F 
-			LD L,A
-			LD B,(HL)
-			LD A,C 
-			AND A 
-			JP P,MUL8_DIV256 
-			NEG 
+COS:			ADD A,64				; Cosine is a quarter revolution copy of the sin wave
+SIN:			LD HL,SIN_TABLE				; The sin table is a 128 byte table
+			LD B,A 					; Store the angle in B to check sign later
+			AND 127 				; The sin table is also mirrored, with the second half negative
+			ADD HL,A				; Index into the table
+			BIT 7,B					; Check sign of the angle
+			LD B,(HL)				; Fetch the value
+			LD A,C 					; A is now the multiplicand
+			JR NZ,1F				; If the sign is negative, then jump here
+;
+; When the sin value is positive
+;
+			AND A 					; If the multiplicand is positive
+			JP P,MUL8_DIV256 			; Then the answer is positive
+			NEG 					; Make the multiplicand positive
 			LD C,A 
-			JP MUL8_DIV256_NEG 
-1:			AND 127
-			LD L,A 
-			LD B,(HL) 
-			LD A,C 
-			AND A 
-			JP P,MUL8_DIV256_NEG 
-			NEG 
+			JP MUL8_DIV256_NEG 			; The answer must be negative
+;
+; When the sin value is negative
+;
+1:			AND A 					; If the multiplicand is positive
+			JP P,MUL8_DIV256_NEG 			; Then the answer is negative
+			NEG 					; Make the multiplicand positive
 			LD C,A 
-			JP MUL8_DIV256 
+			JP MUL8_DIV256 				; The answer must be positive
 
 Cube:			DB 8
 			DB -40,40,40
@@ -572,7 +577,7 @@ SPRITE:			DB 0x04,0x04,0x04,0x04,0x04,0x04,0x04,0xE3,0xE3,0xE3,0xE3,0xE3,0xE3,0x
 
 Code_Length:		EQU $-Code_Start+1
 
-			SAVENEX OPEN "Z80/Demo/demo_3d.nex", Code_Start
+			SAVENEX OPEN "Demo/demo_3d.nex", Code_Start
 			SAVENEX CORE 3, 0, 0
 			SAVENEX CFG  0
 			SAVENEX BAR  1, 0xE0, 50, 25
