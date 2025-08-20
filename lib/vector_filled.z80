@@ -2,13 +2,14 @@
 ; Title:	ZX Spectrum Next Vector Output Routines (Layer 2)
 ; Author:	Dean Belfield
 ; Created:	22/08/2020
-; Last Updated:	24/08/2020
+; Last Updated:	20/08/2025
 ;
 ; Requires:	output, macro
 ;
 ; Modinfo:
 ;
 ; 24/08/2020:	Optimised Draw_Vector_Table and Draw_Horz_Line 
+; 20/08/2025:	Fixed bug in Draw_Triangle_Filled and refactored Draw_Horz_Line
 
 ; EQUS
 ;
@@ -129,7 +130,8 @@ Draw_Triangle_Filled:	LD (Draw_Vector_Table_1+1),A	; Store the colour
 			MAX  (IY+5)
 			SUB L				; Subtract from L (the min)
 			LD B,A				; Get the height
-			RET Z				; Don't draw if zero
+			JP NZ, Draw_Vector_Table	; Only draw if not zero
+			RET
 
 ; Draw a line into the vector table
 ; B = Y pixel position 1
@@ -333,25 +335,20 @@ Draw_Vector_Table_1:	LD C,0				; The colour (self-modded)
 ; E = X pixel position 2
 ; C = Colour
 ;
-Draw_Horz_Line:		LD A,E				; Check if D > E
-			CP D 
-			JR NC,0F
-			LD E,D				; Swap D and E
-			LD D,A		
-; Here:
-; H = High byte of screen buffer address
-; E = X2 (low byte of screen buffer address)
-; D = X1 (low byte of screen buffer address)
-; C = Colour
-;		
-0:			LD A,E 				; Calculate line length in bytes	
+Draw_Horz_Line:		LD A,E				; Check if E > D
 			SUB D 
-			LD B,A	
-			LD L,D
-			JR NZ, 1F			; If not zero, then skip to draw line
-			LD (HL),C
+			JR NC,1F			; If > then just draw the line
+			NEG
+			LD L,E 				; The second point is the start point
+			JR 2F				; Skip to carry on drawing the line
+;
+1:			LD L,D 				; The first point is the start point
+			JR NZ,2F			; Skip if we are drawing more than one pixel	
+			LD (HL),C			; Otherwise, just plot one pixel
 			RET 
-1:			LD (HL),C
-			INC L
-			DJNZ 1B
-			RET
+;		
+2:			LD B,A				; The horizontal length of the line
+3:			LD (HL),C 			; Plot the point
+			INC L				; Increment to next pixel
+			DJNZ 3B				; And loop
+			RET 	
