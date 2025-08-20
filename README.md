@@ -11,7 +11,6 @@ A suite of Z80 modules for the ZX Spectrum Next with routines for:
 - The code is written to cross-assemble in sjasmplus on PC, Mac or Linux
 - Visual Studio Code files included in .vscode folder for build and debug
 - Demo files in the /Demo directory included to give you a quick-start
-- Some library files may be required from my other repository lib-spectrum
 
 ##### NB
 - The DMA library routine is adapted from [one in this article written by Jim Bagley](https://www.specnext.com/the-zxndma/)
